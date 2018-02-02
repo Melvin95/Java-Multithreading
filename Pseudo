@@ -1,0 +1,124 @@
+#############################################################################################################################################################
+								SHARED MEMORY
+#############################################################################################################################################################
+	final int LdockSpace = 5;			/*Max space on loading dock*/
+	final int MdockSpace = 3;			/*Max space on maintenance dock*
+	
+	int waitingAtLdock = 0;				/*Number of ships on the loading dock*/
+	int waitingAtMdock = 0;				/*Number of ships on the maintenance dock*/
+	
+	inTugBoat	:	semaphore = 0;		/*Represents incoming tug-boat*/
+	inQueue		:	semaphore = 0;		/*Signal to incoming-tug boat(this is at most one but was looping infinitely without this)*/
+	mutexIn		:   semaphore = 1;		/*Mutual exclusion for the incoming tug-boat*/
+	
+	forkQueue	:	semaphore = 0;		/*# of ships waiting to be loaded/unloaded(wakes up fork lift)*
+	forkLift	: 	semaphore = 0;		/*Represents a fork-lift ready*
+	forkLiftMax	:	semaphore = 3;		/*# of fork-lifts actually idle(this allows 3 fork lifts to enter critical section at a time)*/
+	
+	mechQueue	:	semaphore = 0;		/*# of ships waiting to be serviced(wakes up mechanic)*/
+	mechTeam	:	semaphore = 0;		/*Represents actual mechanic team*/
+	mutexMech	:	semaphore = 1;		/*Mutal exclusion for mechanic*/ 
+	
+	outQueue	:	semaphore = 0;		/*Signal to outgoing tug-boat*/
+	outTugBoat	: 	semaphore = 0;		/*Outgoing tug boat available*/
+	mutexOut	:	semaphore = 1;		/*Mutual exclusion for outgoing tug-boat*/
+	
+	mutex		: 	semaphore = 1;		/*Allows only one process at a time acces to shared variables(binary semaphore)*/
+	
+
+###########################################################################################################################################################
+									PROCESSES
+###########################################################################################################################################################
+
+----------------------------------------------------------------------------------------------------------------------------------------------
+Ship(i):
+	P(mutex);					    /*Ship requests to enter harbor(critical section)*/
+	if(waitingAtLdock<LdockSpace){ 	/*If there's space on loading dock...else ship leaves*/
+		V(inQueue)					/*Signal to incoming tug-boat you here*/
+		P(inTugBoat)				/*Wait for incoming tug-boat*/
+			enterHarbor();
+			waitingAtLdock++;		/*Ship takes space up an available space on loading dock*/
+		V(mutex);					/*Allow other ships to enter*/
+		V(mutexIn);					/*Allow other ships to use incoming tug-boat*/
+		
+		V(forkQueue);				/*Signal(or wakes up) fork-lift that work to be done*/
+		P(forkLift);				/*Wait for a fork-lift*
+		getLoaded();
+		V(forkLiftTotal(;		    /*Free up this fork-lift, work done*/
+		
+		boolean allowedIn = false;		/*local variable, check whether ship checked mechanic*/
+		loop while allowedIn == false  /*Keep checking for space on maintenance dock till allowed in*/
+		...
+		P(mutex);						/*One ship at a time(single lane) to maintenance dock*/
+		if(waitingAtMdock<MdockSpace){	/*Check for space before moving...else drop request to enter and wait*/
+			moveToMaintenanceDock();
+			waitingAtMdock++;			
+			waitingAtLdock--;			/*Ship has left loading dock, freed up one space
+			allowed = true;				/*Ship(i) has been allowed entry, no need to loop again*/
+			V(mutex);					/*Allow other ships to enter into lane*/
+			
+			V(mechQueue);				/*Signal to mechanic team that work to be done*/
+			P(mechTeam);				/*Wait for the mechanic team;*/
+			getServiced();
+			V(mutexMech);				/*Frees up mechanic*/
+		}
+		else
+			V(mutex);					/*Else no space on maintenance dock, wait, allow other processes access*/
+			suspendProcess(1000);		/*Suspends process for a finite amount of time, process will come back and check for space*/
+		...
+		endloop							/*Ship(i) has been allowed entry onto maintenance dock*/
+			
+		V(outQueue);					/*Signal to outgoing tug-boat that ship wants to leave*/
+		P(outTugBoat);					/*Wait for outgoing tug-boat*/
+		allowed = false;				/*next ship hasn't been allowed in maintenance dock*/
+		waitingAtMdock--;
+		V(mutexOut);					/*Allow other ships to be tugged out*/
+	}
+	
+	
+	else								//Else the loading dock is full so ship passes harbor						
+		V(inTugBoat);					//Ship is leaving, no need for tug-boat
+------------------------------------------------------------------------------------------------------------------------------------------------
+Incoming Tug-Boat(m):
+	loop
+	...
+	P(inQueue);					/*If there's ship needing to be tugged in*/
+	P(mutexIn);					/*One incoming tug-boat*/
+	V(inTugBoat):				/*Release incoming tug-boat to fetch*/
+		tugIn();
+	...
+	endloop		
+------------------------------------------------------------------------------------------------------------------------------------------------
+Fork-Lift(j):
+	loop
+	...
+	P(forkQueue);				/*Goes to sleep if there's 0 items in forkQueue or dequeues...*/
+	P(forkLiftMax);				/*Wait till fork-lift available(idle)*/
+		V(forkLift);			/*Make a fork-lift ready to do work*/
+		doesWork();
+	...
+	endloop
+	
+------------------------------------------------------------------------------------------------------------------------------------------------
+Mechanic-Team(k):
+	loop
+	...
+	P(mechQueue);				/*Sleep till work needs to be done(a ship signals servicing)*/
+	P(mutexMech);				/*One mechanic only*/
+	V(mechTeam):				/*Signal mechanic team ready to do work*/
+		serviceShip();
+	...
+	endloop
+	
+---------------------------------------------------------------------------------------------------------------------------------------------------
+Outgoing Tug-Boat(l):
+	loop
+	...
+		V(outQueue);		/*Signals to tug-boat that ship wants to leave*/
+		P(mutexOut);		/*One outgoing tug-boat*/
+			tugShipOut();
+		V(outTugBoat);		/*Make outgoing tug-boat available*/
+	...
+	endloop
+	
+------------------------------------------------------------------------------------------------------------------------------------------------------
